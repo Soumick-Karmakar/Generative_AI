@@ -9,6 +9,18 @@ translating languages, and completing sentences. RAG extends the already powerfu
 to specific domains or an organization's internal knowledge base, all without the need 
 to retrain the model. It is a cost-effective approach to improving LLM output so it remains relevant, 
 accurate, and useful in various contexts.
+----------------------------------------------
+
+RAG will be implemented using LangChain. 
+
+So to initialize the LangChain, we need to run the command 'uv init' in the terminal. 
+This will create a 'uv.lock' file in the project directory, 
+which is used to manage dependencies and ensure that the correct versions of packages are installed.
 '''
 
+def main():
+    print("Hello from rag!")
 
+
+if __name__ == "__main__":
+    main()
