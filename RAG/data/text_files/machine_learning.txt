@@ -1,0 +1,12 @@
+Machine Learning Overview
+    
+    Machine learning is a subset of artificial intelligence (AI) that focuses on enabling computers to learn and make decisions from data without being explicitly programmed. It involves the development of algorithms and statistical models that allow systems to improve their performance over time through experience.
+    
+    Key concepts in machine learning include:
+    - Supervised Learning: Learning from labeled data.
+    - Unsupervised Learning: Finding patterns in unlabeled data.
+    - Reinforcement Learning: Learning through interaction with an environment.
+    
+    Applications of machine learning are widespread, including image recognition, natural language processing, recommendation systems, and autonomous vehicles.
+    
+    
