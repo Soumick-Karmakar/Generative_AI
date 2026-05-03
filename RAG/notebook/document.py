@@ -2,12 +2,19 @@
 DATA INGESTION PIPELINE
 '''
 
+import os
+from pathlib import Path
+
+# Get the script's directory and set up relative paths
+SCRIPT_DIR = Path(__file__).parent.parent  # Goes from notebook/ to RAG/
+DATA_DIR = SCRIPT_DIR / "data"
 
 '''
 LOADING DOCUMENTS
 '''
 ### Document Structure
 from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 doc = Document(
     page_content="This is the main text content I am using to create RAG system.",
     metadata={
@@ -20,11 +27,10 @@ doc = Document(
 # print(doc)
 
 # Create a simplr text file
-import os
-os.makedirs('../data/text_files/', exist_ok=True)
+os.makedirs(DATA_DIR / "text_files", exist_ok=True)
 
 sample_text = {
-    "../data/text_files/python_intro.txt": """Python Programming Introduction
+    str(DATA_DIR / "text_files/python_intro.txt"): """Python Programming Introduction
     
     Python is a high-level, interpreted programming language known for its simplicity and readability. 
     It was created by Guido van Rossum and first released in 1991. 
@@ -41,7 +47,7 @@ sample_text = {
     
     """,
 
-    "../data/text_files/machine_learning.txt": """Machine Learning Overview
+    str(DATA_DIR / "text_files/machine_learning.txt"): """Machine Learning Overview
     
     Machine learning is a subset of artificial intelligence (AI) that focuses on enabling computers to learn and make decisions from data without being explicitly programmed. It involves the development of algorithms and statistical models that allow systems to improve their performance over time through experience.
     
@@ -65,7 +71,7 @@ for filepath, comtent in sample_text.items():
 
 ### Text Loader
 from langchain_community.document_loaders import TextLoader
-loader = TextLoader('../data/text_files/python_intro.txt', encoding='utf-8')
+loader = TextLoader(str(DATA_DIR / "text_files/python_intro.txt"), encoding='utf-8')
 data = loader.load()
 # print(data) 
 
@@ -74,7 +80,7 @@ data = loader.load()
 from langchain_community.document_loaders import DirectoryLoader
 # load all text files in the directory
 dir_loader = DirectoryLoader(
-    "../data/text_files/",
+    str(DATA_DIR / "text_files"),
     glob="**/*.txt", #pattern to match all text files in the directory and subdirectories
     loader_cls=TextLoader, # specify the loader class to use for loading the files
     loader_kwargs={"encoding": "utf-8"}, # additional arguments to pass to the loader class
@@ -88,13 +94,39 @@ docs = dir_loader.load()
 from langchain_community.document_loaders import PyMuPDFLoader
 # load all pdf files in the directory
 dir_loader = DirectoryLoader(
-    "../data/pdf/",
+    str(DATA_DIR / "pdf"),
     glob="**/*.pdf", #pattern to match all pdf files in the directory and subdirectories
     loader_cls=PyMuPDFLoader, # specify the loader class to use for loading the files
     show_progress=True # show progress bar while loading files
 )
 docs = dir_loader.load()
 # print(docs)
+
+
+'''
+Chunking Documents
+'''
+
+def split_documents(documents,chunk_size=1000,chunk_overlap=200):
+    """Split documents into smaller chunks for better RAG performance"""
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+        separators=["\n\n", "\n", " ", ""]
+    )
+    split_docs = text_splitter.split_documents(documents)
+    print(f"Split {len(documents)} documents into {len(split_docs)} chunks")
+    
+    # Show example of a chunk
+    if split_docs:
+        print(f"\nExample chunk:")
+        print(f"Content: {split_docs[0].page_content[:200]}...")
+        print(f"Metadata: {split_docs[0].metadata}")
+    
+    return split_docs
+
+chunks=split_documents(docs)
 
 
 '''
@@ -128,7 +160,7 @@ class EmbeddingManager:
         try:
             print(f"Loading embedding model: {self.model_name}")
             self.model = SentenceTransformer(self.model_name)
-            print(f"Model loaded successfully. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")
+            print(f"Model loaded successfully. Embedding dimension: {self.model.get_embedding_dimension()}")   # get_sentence_embedding_dimension() has been renamed to get_embedding_dimension() in newer versions of sentence-transformers
         except Exception as e:
             print(f"Error loading model {self.model_name}: {e}")
             raise
@@ -252,3 +284,13 @@ class VectorStore:
 
 ## initialize the vector store
 vector_store = VectorStore()
+
+
+## Convert the text to embeddings
+texts = [doc.page_content for doc in chunks]
+
+## Generate embeddings for the document chunks
+embeddings = embedding_manager.generate_embeddings(texts) 
+
+## Store in the vector store
+vector_store.add_documents(chunks, embeddings)
