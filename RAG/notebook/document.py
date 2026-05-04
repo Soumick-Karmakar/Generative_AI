@@ -2,12 +2,19 @@
 DATA INGESTION PIPELINE
 '''
 
+import os
+from pathlib import Path
+
+# Get the script's directory and set up relative paths
+SCRIPT_DIR = Path(__file__).parent.parent  # Goes from notebook/ to RAG/
+DATA_DIR = SCRIPT_DIR / "data"
 
 '''
 LOADING DOCUMENTS
 '''
 ### Document Structure
 from langchain_core.documents import Document
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 doc = Document(
     page_content="This is the main text content I am using to create RAG system.",
     metadata={
@@ -20,11 +27,10 @@ doc = Document(
 # print(doc)
 
 # Create a simplr text file
-import os
-os.makedirs('../data/text_files/', exist_ok=True)
+os.makedirs(DATA_DIR / "text_files", exist_ok=True)
 
 sample_text = {
-    "../data/text_files/python_intro.txt": """Python Programming Introduction
+    str(DATA_DIR / "text_files/python_intro.txt"): """Python Programming Introduction
     
     Python is a high-level, interpreted programming language known for its simplicity and readability. 
     It was created by Guido van Rossum and first released in 1991. 
@@ -41,7 +47,7 @@ sample_text = {
     
     """,
 
-    "../data/text_files/machine_learning.txt": """Machine Learning Overview
+    str(DATA_DIR / "text_files/machine_learning.txt"): """Machine Learning Overview
     
     Machine learning is a subset of artificial intelligence (AI) that focuses on enabling computers to learn and make decisions from data without being explicitly programmed. It involves the development of algorithms and statistical models that allow systems to improve their performance over time through experience.
     
@@ -65,7 +71,7 @@ for filepath, comtent in sample_text.items():
 
 ### Text Loader
 from langchain_community.document_loaders import TextLoader
-loader = TextLoader('../data/text_files/python_intro.txt', encoding='utf-8')
+loader = TextLoader(str(DATA_DIR / "text_files/python_intro.txt"), encoding='utf-8')
 data = loader.load()
 # print(data) 
 
@@ -74,7 +80,7 @@ data = loader.load()
 from langchain_community.document_loaders import DirectoryLoader
 # load all text files in the directory
 dir_loader = DirectoryLoader(
-    "../data/text_files/",
+    str(DATA_DIR / "text_files"),
     glob="**/*.txt", #pattern to match all text files in the directory and subdirectories
     loader_cls=TextLoader, # specify the loader class to use for loading the files
     loader_kwargs={"encoding": "utf-8"}, # additional arguments to pass to the loader class
@@ -88,13 +94,39 @@ docs = dir_loader.load()
 from langchain_community.document_loaders import PyMuPDFLoader
 # load all pdf files in the directory
 dir_loader = DirectoryLoader(
-    "../data/pdf/",
+    str(DATA_DIR / "pdf"),
     glob="**/*.pdf", #pattern to match all pdf files in the directory and subdirectories
     loader_cls=PyMuPDFLoader, # specify the loader class to use for loading the files
     show_progress=True # show progress bar while loading files
 )
 docs = dir_loader.load()
 # print(docs)
+
+
+'''
+Chunking Documents
+'''
+
+def split_documents(documents,chunk_size=500,chunk_overlap=100):
+    """Split documents into smaller chunks for better RAG performance"""
+    text_splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+        length_function=len,
+        separators=["\n\n", "\n", " ", ""]
+    )
+    split_docs = text_splitter.split_documents(documents)
+    print(f"Split {len(documents)} documents into {len(split_docs)} chunks")
+    
+    # Show example of a chunk
+    if split_docs:
+        print(f"\nExample chunk:")
+        print(f"Content: {split_docs[0].page_content[:200]}...")
+        print(f"Metadata: {split_docs[0].metadata}")
+    
+    return split_docs
+
+chunks=split_documents(docs)
 
 
 '''
@@ -108,6 +140,17 @@ from chromadb.config import Settings
 import uuid
 from typing import List, Dict, Any, Tuple
 from sklearn.metrics.pairwise import cosine_similarity
+
+"""
+To avoid warnings like the below:
+
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+You can get your token from https://huggingface.co/settings/tokens
+and then set it in your environment variables. For example, in a terminal you can run:
+export HF_TOKEN='your_token_here'  # For Linux/Mac
+set HF_TOKEN='your_token_here'  # For Windows
+"""
 
 class EmbeddingManager:
     """Handles document embedding using SentenceTransformers"""
@@ -128,7 +171,7 @@ class EmbeddingManager:
         try:
             print(f"Loading embedding model: {self.model_name}")
             self.model = SentenceTransformer(self.model_name)
-            print(f"Model loaded successfully. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")
+            print(f"Model loaded successfully. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")  
         except Exception as e:
             print(f"Error loading model {self.model_name}: {e}")
             raise
@@ -150,11 +193,6 @@ class EmbeddingManager:
         print(f"Generated embeddings with shape: {embeddings.shape}")
         return embeddings
     
-    def get_embedding_dimension(self) -> int:
-        """Get the dimension of the embeddings"""
-        if not self.model:
-            raise ValueError("Model not loaded.")
-        return self.model.get_sentence_embedding_dimension()
 
 ## initialize embedding manager
 embedding_manager = EmbeddingManager(model_name='all-MiniLM-L6-v2')
@@ -207,6 +245,12 @@ class VectorStore:
             documents: List of Langchain documents
             embeddings: corresponding embedding for the documents.
         """
+
+        # Logic to prevent duplicate ingestion - check if collection already has data
+        if self.collection.count() > 0:
+            print("Collection already has data. Skipping ingestion to avoid duplicates.")
+            return
+
         if len(embeddings) != len(documents):
             raise ValueError("Number of embeddings must match number of documents.")
         
@@ -252,3 +296,108 @@ class VectorStore:
 
 ## initialize the vector store
 vector_store = VectorStore()
+
+
+## Convert the text to embeddings
+texts = [doc.page_content for doc in chunks]
+
+## Generate embeddings for the document chunks
+embeddings = embedding_manager.generate_embeddings(texts) 
+
+## Store in the vector store
+vector_store.add_documents(chunks, embeddings)
+
+
+
+
+'''
+RAG RETRIEVAL PIPELINE FROM VECTOR STORE
+'''
+
+class RAGRetriever:
+    """Handles query-based retrieval from the vector store"""
+    
+    def __init__(self, vector_store: VectorStore, embedding_manager: EmbeddingManager):
+        """
+        Initialize the retriever
+        
+        Args:
+            vector_store: Vector store containing document embeddings
+            embedding_manager: Manager for generating query embeddings
+        """
+        self.vector_store = vector_store
+        self.embedding_manager = embedding_manager
+
+    def retrieve(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
+        """
+        Retrieve relevant documents for a query
+        
+        Args:
+            query: The search query
+            top_k: Number of top results to return
+            score_threshold: Minimum similarity score threshold
+            
+        Returns:
+            List of dictionaries containing retrieved documents and metadata
+        """
+        print(f"Retrieving documents for query: '{query}'")
+        print(f"Top K: {top_k}, Score threshold: {score_threshold}")
+        
+        # Generate query embedding
+        query_embedding = self.embedding_manager.generate_embeddings([query])[0]
+        
+        # Search in vector store
+        try:
+            results = self.vector_store.collection.query(
+                query_embeddings=[query_embedding.tolist()],
+                n_results=top_k
+            )
+            
+            # Process results
+            retrieved_docs = []
+            
+            if results['documents'] and results['documents'][0]:
+                documents = results['documents'][0]
+                metadatas = results['metadatas'][0]
+                distances = results['distances'][0]
+                ids = results['ids'][0]
+                
+                for i, (doc_id, document, metadata, distance) in enumerate(zip(ids, documents, metadatas, distances)):
+                    # Convert distance to similarity score (ChromaDB uses cosine distance)
+                    # similarity_score = 1 - distance  
+                    
+                    print(f"[DEBUG] Distance: {distance:.4f}")
+
+                    # Filter based on score threshold
+                    # if similarity_score >= score_threshold:
+                    if distance < 1.1:
+                        retrieved_docs.append({
+                            'id': doc_id,
+                            'content': document,
+                            'metadata': metadata,
+                            #'similarity_score': similarity_score,
+                            'distance': distance,
+                            'rank': i + 1
+                        })
+                        
+                
+                print(f"Retrieved {len(retrieved_docs)} documents (after filtering)")
+            else:
+                print("No documents found")
+            
+            return retrieved_docs
+            
+        except Exception as e:
+            print(f"Error during retrieval: {e}")
+            return []
+
+# initialize the retriever
+rag_retriever=RAGRetriever(vector_store,embedding_manager)
+
+# using a sample query to test the retrieval
+sample_query = "What are the Python skills of Soumick Karmakar?"
+retrieved_data = rag_retriever.retrieve(sample_query)
+print("============================================================")
+print(retrieved_data)
+print("============================================================")
+
