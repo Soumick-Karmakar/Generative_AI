@@ -107,7 +107,7 @@ docs = dir_loader.load()
 Chunking Documents
 '''
 
-def split_documents(documents,chunk_size=1000,chunk_overlap=200):
+def split_documents(documents,chunk_size=500,chunk_overlap=100):
     """Split documents into smaller chunks for better RAG performance"""
     text_splitter = RecursiveCharacterTextSplitter(
         chunk_size=chunk_size,
@@ -141,6 +141,17 @@ import uuid
 from typing import List, Dict, Any, Tuple
 from sklearn.metrics.pairwise import cosine_similarity
 
+"""
+To avoid warnings like the below:
+
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+
+You can get your token from https://huggingface.co/settings/tokens
+and then set it in your environment variables. For example, in a terminal you can run:
+export HF_TOKEN='your_token_here'  # For Linux/Mac
+set HF_TOKEN='your_token_here'  # For Windows
+"""
+
 class EmbeddingManager:
     """Handles document embedding using SentenceTransformers"""
 
@@ -160,7 +171,7 @@ class EmbeddingManager:
         try:
             print(f"Loading embedding model: {self.model_name}")
             self.model = SentenceTransformer(self.model_name)
-            print(f"Model loaded successfully. Embedding dimension: {self.model.get_embedding_dimension()}")   # get_sentence_embedding_dimension() has been renamed to get_embedding_dimension() in newer versions of sentence-transformers
+            print(f"Model loaded successfully. Embedding dimension: {self.model.get_sentence_embedding_dimension()}")  
         except Exception as e:
             print(f"Error loading model {self.model_name}: {e}")
             raise
@@ -182,11 +193,6 @@ class EmbeddingManager:
         print(f"Generated embeddings with shape: {embeddings.shape}")
         return embeddings
     
-    def get_embedding_dimension(self) -> int:
-        """Get the dimension of the embeddings"""
-        if not self.model:
-            raise ValueError("Model not loaded.")
-        return self.model.get_sentence_embedding_dimension()
 
 ## initialize embedding manager
 embedding_manager = EmbeddingManager(model_name='all-MiniLM-L6-v2')
@@ -239,6 +245,12 @@ class VectorStore:
             documents: List of Langchain documents
             embeddings: corresponding embedding for the documents.
         """
+
+        # Logic to prevent duplicate ingestion - check if collection already has data
+        if self.collection.count() > 0:
+            print("Collection already has data. Skipping ingestion to avoid duplicates.")
+            return
+
         if len(embeddings) != len(documents):
             raise ValueError("Number of embeddings must match number of documents.")
         
@@ -294,3 +306,98 @@ embeddings = embedding_manager.generate_embeddings(texts)
 
 ## Store in the vector store
 vector_store.add_documents(chunks, embeddings)
+
+
+
+
+'''
+RAG RETRIEVAL PIPELINE FROM VECTOR STORE
+'''
+
+class RAGRetriever:
+    """Handles query-based retrieval from the vector store"""
+    
+    def __init__(self, vector_store: VectorStore, embedding_manager: EmbeddingManager):
+        """
+        Initialize the retriever
+        
+        Args:
+            vector_store: Vector store containing document embeddings
+            embedding_manager: Manager for generating query embeddings
+        """
+        self.vector_store = vector_store
+        self.embedding_manager = embedding_manager
+
+    def retrieve(self, query: str, top_k: int = 5, score_threshold: float = 0.0) -> List[Dict[str, Any]]:
+        """
+        Retrieve relevant documents for a query
+        
+        Args:
+            query: The search query
+            top_k: Number of top results to return
+            score_threshold: Minimum similarity score threshold
+            
+        Returns:
+            List of dictionaries containing retrieved documents and metadata
+        """
+        print(f"Retrieving documents for query: '{query}'")
+        print(f"Top K: {top_k}, Score threshold: {score_threshold}")
+        
+        # Generate query embedding
+        query_embedding = self.embedding_manager.generate_embeddings([query])[0]
+        
+        # Search in vector store
+        try:
+            results = self.vector_store.collection.query(
+                query_embeddings=[query_embedding.tolist()],
+                n_results=top_k
+            )
+            
+            # Process results
+            retrieved_docs = []
+            
+            if results['documents'] and results['documents'][0]:
+                documents = results['documents'][0]
+                metadatas = results['metadatas'][0]
+                distances = results['distances'][0]
+                ids = results['ids'][0]
+                
+                for i, (doc_id, document, metadata, distance) in enumerate(zip(ids, documents, metadatas, distances)):
+                    # Convert distance to similarity score (ChromaDB uses cosine distance)
+                    # similarity_score = 1 - distance  
+                    
+                    print(f"[DEBUG] Distance: {distance:.4f}")
+
+                    # Filter based on score threshold
+                    # if similarity_score >= score_threshold:
+                    if distance < 1.1:
+                        retrieved_docs.append({
+                            'id': doc_id,
+                            'content': document,
+                            'metadata': metadata,
+                            #'similarity_score': similarity_score,
+                            'distance': distance,
+                            'rank': i + 1
+                        })
+                        
+                
+                print(f"Retrieved {len(retrieved_docs)} documents (after filtering)")
+            else:
+                print("No documents found")
+            
+            return retrieved_docs
+            
+        except Exception as e:
+            print(f"Error during retrieval: {e}")
+            return []
+
+# initialize the retriever
+rag_retriever=RAGRetriever(vector_store,embedding_manager)
+
+# using a sample query to test the retrieval
+sample_query = "What are the Python skills of Soumick Karmakar?"
+retrieved_data = rag_retriever.retrieve(sample_query)
+print("============================================================")
+print(retrieved_data)
+print("============================================================")
+
