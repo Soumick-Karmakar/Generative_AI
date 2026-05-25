@@ -1,6 +1,8 @@
-'''
-DATA INGESTION PIPELINE
-'''
+#***********************************#
+#                                   #
+#      DATA INGESTION PIPELINE      #
+#                                   #
+#***********************************#
 
 import os
 from pathlib import Path
@@ -150,6 +152,8 @@ You can get your token from https://huggingface.co/settings/tokens
 and then set it in your environment variables. For example, in a terminal you can run:
 export HF_TOKEN='your_token_here'  # For Linux/Mac
 set HF_TOKEN='your_token_here'  # For Windows
+
+This is just for env injection through the terminal
 """
 
 class EmbeddingManager:
@@ -401,3 +405,99 @@ print("============================================================")
 print(retrieved_data)
 print("============================================================")
 
+
+
+
+#***********************************#
+#                                   #
+#      DATA RETRIEVAL PIPELINE      #
+#                                   #
+#***********************************#
+
+
+# RAG pipeline with Groq LLM
+from langchain_groq import ChatGroq
+import os
+from dotenv import load_dotenv
+load_dotenv()
+
+### Initialize Groq LLM
+groq_api_key = os.getenv("GORQ_API_KEY")
+llm = ChatGroq(groq_api_key=groq_api_key, model="llama-3.3-70b-versatile", temperature=0.1, max_tokens=1024)
+
+
+### RAG Function: Retrieve Context + Generate Response
+def rag_app(query, retriever, llm, top_k=3):
+    """RAG pipeline to retrieve relevant documents and generate response"""
+
+    # Retrieve relevant documents
+    retrieved_docs = retriever.retrieve(query, top_k=top_k)
+    if not retrieved_docs:
+        return "No relevant information found in the documents."
+    
+    context = "\n\n".join([f"Document {doc['rank']}:\n{doc['content']}" for doc in retrieved_docs]) if retrieved_docs else ""
+    if not retrieved_docs:
+        return "No relevant information found in the documents."
+    
+    # Step 3: Generate response using LLM
+    prompt = f"""
+        Use the following context to answer the question concisely:
+        Context: {context}
+
+        Question: {query}
+
+        Answer:
+    """
+    
+    response = llm.invoke([prompt.format(context=context, query=query)])
+    
+    return response.content
+
+
+answer = rag_app(sample_query, rag_retriever, llm)
+print("============================================================")
+print(f"Query: {sample_query}")
+print(f"Answer: {answer}")
+print("============================================================")
+
+
+
+# --- Enhanced RAG Pipeline Features ---
+def advanced_rag(query, retriever, llm, top_k=5, min_score=0.2, return_context=False):
+    """
+    RAG pipeline with extra features:
+    - Returns answer, sources, confidence score, and optionally full context.
+    """
+    results = retriever.retrieve(query, top_k=top_k, score_threshold=min_score)
+    if not results:
+        return {'answer': 'No relevant context found.', 'sources': [], 'confidence': 0.0, 'context': ''}
+    
+    # Prepare context and sources
+    context = "\n\n".join([doc['content'] for doc in results])
+    sources = [{
+        'source': doc['metadata'].get('source_file', doc['metadata'].get('source', 'unknown')),
+        'page': doc['metadata'].get('page', 'unknown'),
+        # 'score': doc['similarity_score'],
+        'preview': doc['content'][:300] + '...'
+    } for doc in results]
+    confidence = 1 - min([doc.get('distance', 1.0) for doc in results])
+    
+    # Generate answer
+    prompt = f"""Use the following context to answer the question concisely.\nContext:\n{context}\n\nQuestion: {query}\n\nAnswer:"""
+    response = llm.invoke([prompt.format(context=context, query=query)])
+    
+    output = {
+        'answer': response.content,
+        'sources': sources,
+        'confidence': confidence
+    }
+    if return_context:
+        output['context'] = context
+    return output
+
+# Example usage:
+result = advanced_rag("What are the Python skills of Soumick Karmakar?", rag_retriever, llm, top_k=3, min_score=0.1, return_context=True)
+print("Answer:", result['answer'])
+print("Sources:", result['sources'])
+print("Confidence:", result['confidence'])
+print("Context Preview:", result['context'][:300])
