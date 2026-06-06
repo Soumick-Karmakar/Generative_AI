@@ -9,3 +9,5 @@ chromadb
 langchain-groq
 python-dotenv
 typesense
+langchain_openai
+langgraph
