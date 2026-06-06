@@ -422,7 +422,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 ### Initialize Groq LLM
-groq_api_key = os.getenv("GORQ_API_KEY")
+groq_api_key = os.getenv("GROQ_API_KEY")
 llm = ChatGroq(groq_api_key=groq_api_key, model="llama-3.3-70b-versatile", temperature=0.1, max_tokens=1024)
 
 
