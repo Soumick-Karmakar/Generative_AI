@@ -1,0 +1,5 @@
+pymongo
+langchain
+langchain_community
+pypdf
+google-genai
